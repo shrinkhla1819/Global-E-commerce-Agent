@@ -33,11 +33,13 @@ npm install
 ```
 
 ### 3. Configure Environment Variables
-Create a `.env` file in the root directory and add your Gemini API Key:
+Create a `.env` file in the root directory and add your API keys:
 ```env
 GEMINI_API_KEY=your_google_ai_studio_api_key_here
+VITE_SERPER_API_KEY=your_serper_api_key_here
 ```
-*You can get a free API key from [Google AI Studio](https://aistudio.google.com/). Ensure that the "Google Search" tool is enabled for your project.*
+*You can get a free Gemini API key from [Google AI Studio](https://aistudio.google.com/).* 
+*For real-time shopping results, get a Serper API key from [Serper.dev](https://serper.dev/).*
 
 ### 4. Run the Development Server
 ```bash
