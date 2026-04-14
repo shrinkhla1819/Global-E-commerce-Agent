@@ -1,0 +1,5 @@
+{
+  "name": "Global E-commerce Agent",
+  "description": "A smart e-commerce agent that searches for products globally, manages a universal cart, and handles checkout.",
+  "requestFramePermissions": ["microphone"]
+}
