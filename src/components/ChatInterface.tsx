@@ -120,8 +120,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     }
   };
 
-  const [isRealTimeEnabled, setIsRealTimeEnabled] = useState(true);
-
   const handleSend = async (overrideInput?: string, isLoadMore: boolean = false) => {
     const userMessage = overrideInput || input.trim();
     if (!userMessage || isLoading) return;
@@ -138,8 +136,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
     try {
       const pageToFetch = isLoadMore ? currentPage + 1 : 1;
-      // If real-time is disabled, we skip the tool-based search entirely
-      const result = await searchProducts(userMessage, pageToFetch, isRealTimeEnabled);
+      const result = await searchProducts(userMessage, pageToFetch);
       
       setMessages(prev => [...prev, { 
         role: 'model', 
@@ -176,20 +173,11 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
             <h1 className="font-bold text-gray-900 leading-tight">Shopping Agent</h1>
             <div className="flex items-center gap-1.5">
               <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-              <span className="text-[10px] uppercase tracking-wider font-bold text-gray-400">Global Search Active</span>
+              <span className="text-[10px] uppercase tracking-wider font-bold text-gray-400">Search Engine Active</span>
             </div>
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2 mr-4 bg-gray-50 px-3 py-1.5 rounded-lg border border-gray-100">
-            <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Real-time</span>
-            <button 
-              onClick={() => setIsRealTimeEnabled(!isRealTimeEnabled)}
-              className={`w-10 h-5 rounded-full relative transition-colors ${isRealTimeEnabled ? 'bg-green-500' : 'bg-gray-300'}`}
-            >
-              <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${isRealTimeEnabled ? 'left-6' : 'left-1'}`} />
-            </button>
-          </div>
           <button
             onClick={onOpenCart}
             className="relative p-2.5 bg-gray-100 hover:bg-gray-200 rounded-xl transition-all active:scale-95"
@@ -210,8 +198,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
           {messages.map((msg, idx) => (
             <motion.div
               key={idx}
-              initial={{ opacity: 0, y: 10 }}
+              initial={{ opacity: 0, y: 5 }}
               animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.2 }}
               className={`flex gap-4 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}
             >
               <div className={`w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 shadow-sm ${
@@ -231,16 +220,11 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                   {msg.role === 'model' && msg.products && (
                     <div className="mt-4 pt-3 border-t border-gray-100 flex flex-col gap-2">
                       <div className="flex items-center gap-2">
-                        <div className={`w-2 h-2 rounded-full ${msg.isRealTime ? 'bg-green-500 animate-pulse' : 'bg-amber-500'}`} />
-                        <span className={`text-[10px] font-bold uppercase tracking-wider ${msg.isRealTime ? 'text-green-600' : 'text-amber-600'}`}>
-                          {msg.isRealTime ? 'Real-time Search Results' : 'AI Knowledge Fallback'}
+                        <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-green-600">
+                          Real-time Search Results
                         </span>
                       </div>
-                      {!msg.isRealTime && msg.error && (
-                        <div className="text-[10px] text-amber-700 bg-amber-50 p-2 rounded-lg border border-amber-100 font-mono">
-                          Error: {msg.error}
-                        </div>
-                      )}
                     </div>
                   )}
                 </div>
@@ -276,14 +260,15 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
+            transition={{ duration: 0.1 }}
             className="flex gap-4"
           >
-            <div className="w-10 h-10 rounded-xl bg-blue-100 text-blue-600 flex items-center justify-center">
+            <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
               <Bot size={20} />
             </div>
-            <div className="bg-white border border-gray-100 p-4 rounded-2xl rounded-tl-none flex items-center gap-3 text-gray-500 shadow-sm">
-              <Loader2 className="animate-spin" size={18} />
-              <span className="text-sm font-medium">Searching global catalog...</span>
+            <div className="bg-white border border-gray-100 p-3 rounded-2xl rounded-tl-none flex items-center gap-2 text-gray-400 shadow-sm">
+              <div className="w-4 h-4 border-2 border-blue-600/20 border-t-blue-600 rounded-full animate-spin" />
+              <span className="text-xs font-bold uppercase tracking-wider">Finding...</span>
             </div>
           </motion.div>
         )}

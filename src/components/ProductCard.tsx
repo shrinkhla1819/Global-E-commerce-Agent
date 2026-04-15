@@ -15,42 +15,50 @@ export const ProductCard: React.FC<ProductCardProps> = ({
   onAddToCart, 
   onComparePrices,
 }) => {
-  const [imgSrc, setImgSrc] = React.useState<string>(product.thumbnailUrl || product.imageUrl || '');
+  const [imgSrc, setImgSrc] = React.useState<string>(() => {
+    if (product.thumbnailUrl) return product.thumbnailUrl;
+    if (product.imageUrl) return product.imageUrl;
+    const seed = encodeURIComponent(product.name.substring(0, 30));
+    return `https://picsum.photos/seed/${seed}/500/500`;
+  });
   const [retryCount, setRetryCount] = React.useState(0);
   const [isLoaded, setIsLoaded] = React.useState(false);
 
   // Sync image source when product changes
   React.useEffect(() => {
-    setImgSrc(product.thumbnailUrl || product.imageUrl || '');
+    const initialSrc = product.thumbnailUrl || product.imageUrl || `https://picsum.photos/seed/${encodeURIComponent(product.name.substring(0, 30))}/500/500`;
+    setImgSrc(initialSrc);
     setRetryCount(0);
     setIsLoaded(false);
-  }, [product.imageUrl, product.thumbnailUrl, product.id]);
+  }, [product.imageUrl, product.thumbnailUrl, product.id, product.name]);
 
   const handleImageError = () => {
-    if (retryCount === 0 && product.imageUrl && product.imageUrl !== imgSrc) {
-      // If thumbnail failed, try high-res direct
-      setImgSrc(product.imageUrl);
-      setRetryCount(1);
-    } else if (retryCount === 1 && product.imageUrl) {
-      // Try high-res with proxy
-      setImgSrc(`https://images.weserv.nl/?url=${encodeURIComponent(product.imageUrl)}&w=500&h=500&fit=contain&bg=white`);
-      setRetryCount(2);
-    } else if (retryCount === 2 && product.imageUrl) {
-      // Try secondary proxy
-      setImgSrc(`https://i0.wp.com/${product.imageUrl.replace(/^https?:\/\//, '')}?w=500`);
-      setRetryCount(3);
+    const proxies = [
+      (url: string) => `https://images.weserv.nl/?url=${encodeURIComponent(url)}&w=600&h=600&fit=contain&bg=white`,
+      (url: string) => `https://i0.wp.com/${url.replace(/^https?:\/\//, '')}?w=600`,
+      (url: string) => `https://corsproxy.io/?${encodeURIComponent(url)}`
+    ];
+
+    if (retryCount < proxies.length && product.imageUrl) {
+      setImgSrc(proxies[retryCount](product.imageUrl));
+      setRetryCount(prev => prev + 1);
+    } else if (retryCount === proxies.length && product.thumbnailUrl && product.thumbnailUrl !== product.imageUrl) {
+      // One last try with the thumbnail if we haven't already
+      setImgSrc(product.thumbnailUrl);
+      setRetryCount(prev => prev + 1);
     } else {
       // Final fallback to placeholder
       const seed = encodeURIComponent(product.name.substring(0, 30));
       setImgSrc(`https://picsum.photos/seed/${seed}/500/500`);
-      setRetryCount(4);
+      setRetryCount(99); // Stop retrying
     }
   };
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 20 }}
+      initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.2 }}
       className="bg-white border border-gray-100 rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-shadow group"
     >
       <div className="relative aspect-square overflow-hidden bg-gray-50 flex items-center justify-center">
@@ -65,27 +73,30 @@ export const ProductCard: React.FC<ProductCardProps> = ({
           src={imgSrc}
           alt={product.name}
           className={cn(
-            "w-full h-full object-contain p-2 group-hover:scale-105 transition-all duration-500 relative z-10",
+            "w-full h-full object-contain p-2 group-hover:scale-105 transition-all duration-200 relative z-10",
             isLoaded ? "opacity-100" : "opacity-0"
           )}
           referrerPolicy="no-referrer"
+          loading="eager"
+          decoding="async"
           onLoad={() => setIsLoaded(true)}
           onError={handleImageError}
         />
-        <div className="absolute top-2 left-2">
-          <span className="px-2 py-1 bg-white/90 backdrop-blur-sm rounded-md text-[10px] font-bold text-gray-500 uppercase tracking-wider shadow-sm">
+        <div className="absolute top-2 left-2 z-20">
+          <span className="px-2 py-1 bg-white/95 backdrop-blur-sm rounded-md text-[10px] font-bold text-gray-600 uppercase tracking-wider shadow-md border border-gray-100">
             Global Find
           </span>
         </div>
-        <div className="absolute top-2 right-2 flex flex-col gap-2">
+        <div className="absolute top-2 right-2 flex flex-col gap-2 z-20">
           <a
             href={product.sourceUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="p-2 bg-white/90 backdrop-blur-sm rounded-full text-gray-600 hover:text-blue-600 transition-colors shadow-sm"
+            className="flex items-center gap-1.5 pl-2 pr-3 py-1.5 bg-white/95 backdrop-blur-sm rounded-full text-gray-700 hover:text-blue-600 transition-all shadow-md border border-gray-100 group/link"
             title={`View on ${product.sourceName}`}
           >
-            <ExternalLink size={16} />
+            <ExternalLink size={14} className="group-hover/link:scale-110 transition-transform" />
+            <span className="text-[10px] font-bold truncate max-w-[80px]">{product.sourceName}</span>
           </a>
         </div>
         {product.rating && (
@@ -125,9 +136,21 @@ export const ProductCard: React.FC<ProductCardProps> = ({
         </p>
         <div className="flex flex-col gap-2">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-medium px-2 py-1 bg-gray-100 text-gray-600 rounded-md">
+            <a
+              href={product.sourceUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[10px] font-bold px-2 py-1 bg-gray-100 text-gray-600 rounded-md hover:bg-gray-200 transition-colors flex items-center gap-1.5"
+            >
+              <img 
+                src={`https://www.google.com/s2/favicons?domain=${new URL(product.sourceUrl).hostname}&sz=32`} 
+                alt="" 
+                className="w-3 h-3 rounded-sm"
+                referrerPolicy="no-referrer"
+              />
               {product.sourceName}
-            </span>
+              <ExternalLink size={10} />
+            </a>
             <button
               onClick={() => onAddToCart(product)}
               className="flex items-center gap-2 px-4 py-2 bg-black text-white rounded-xl text-sm font-medium hover:bg-gray-800 transition-colors active:scale-95"

@@ -20,49 +20,14 @@ function getAI(): GoogleGenAI {
   return aiInstance;
 }
 
-const PRODUCT_SCHEMA = {
-  type: Type.ARRAY,
-  items: {
-    type: Type.OBJECT,
-    properties: {
-      id: { type: Type.STRING },
-      name: { type: Type.STRING },
-      description: { type: Type.STRING },
-      price: { type: Type.NUMBER },
-      originalPrice: { type: Type.NUMBER, description: "The price before discount, if available." },
-      discount: { type: Type.STRING, description: "The discount percentage or amount, e.g., '56% off'." },
-      currency: { type: Type.STRING },
-      imageUrl: { type: Type.STRING },
-      sourceUrl: { type: Type.STRING },
-      sourceName: { type: Type.STRING },
-      brand: { type: Type.STRING },
-      rating: { type: Type.NUMBER },
-      reviewCount: { type: Type.NUMBER, description: "Number of customer reviews." },
-    },
-    required: ["id", "name", "description", "price", "currency", "imageUrl", "sourceUrl", "sourceName"],
-  },
-};
-
 // Cache for search results to enable "instant" loading for repeated queries
 const searchCache = new Map<string, { products: Product[], timestamp: number }>();
 const CACHE_TTL = 1000 * 60 * 5; // 5 minutes
 
-export async function searchProducts(query: string, page: number = 1, useRealTime: boolean = true): Promise<{ text: string; products: Product[]; isRealTime: boolean; error?: string }> {
-  // Robust key detection for Gemini
-  const apiKey = (import.meta as any).env?.VITE_GEMINI_API_KEY || 
-                 (process as any).env?.GEMINI_API_KEY || 
-                 (process as any).env?.VITE_GEMINI_API_KEY;
-  
-  // Robust Serper key detection
-  const serperKey = (import.meta as any).env?.VITE_SERPER_API_KEY || 
-                    (process as any).env?.VITE_SERPER_API_KEY || 
-                    (process as any).env?.SERPER_API_KEY;
-
-  console.log("Serper Key Detected:", serperKey ? `YES (${serperKey.substring(0, 4)}...)` : "NO");
-  console.log("Gemini Key Detected:", apiKey ? `YES (${apiKey.substring(0, 4)}...)` : "NO");
-
-  if (!apiKey || apiKey.includes('TODO')) {
-    return { text: "API Key missing", products: [], isRealTime: false, error: "MISSING_API_KEY" };
+export async function searchProducts(query: string, page: number = 1): Promise<{ text: string; products: Product[]; isRealTime: boolean; error?: string }> {
+  const serperKey = process.env.VITE_SERPER_API_KEY;
+  if (!serperKey || serperKey === "" || serperKey.includes('TODO')) {
+    return { text: "Key missing", products: [], isRealTime: true, error: "MISSING_KEY" };
   }
 
   const cacheKey = `${query.toLowerCase()}-${page}`;
@@ -71,93 +36,60 @@ export async function searchProducts(query: string, page: number = 1, useRealTim
     return { text: `Found ${cached.products.length} results (cached)`, products: cached.products, isRealTime: true };
   }
 
-  if (useRealTime && serperKey && !serperKey.includes('TODO') && serperKey !== "undefined") {
-    let attempts = 0;
-    const maxAttempts = 2;
-    
-    while (attempts < maxAttempts) {
-      try {
-        const numToFetch = page === 1 ? 5 : 10;
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 6000); 
-
-        const serperResponse = await fetch("https://google.serper.dev/shopping", {
-          method: "POST",
-          headers: { 
-            "X-API-KEY": serperKey, 
-            "Content-Type": "application/json" 
-          },
-          signal: controller.signal,
-          body: JSON.stringify({ q: query, gl: "in", hl: "en", num: numToFetch, page: page }),
-        });
-
-        clearTimeout(timeoutId);
-        
-        if (!serperResponse.ok) {
-          const errorText = await serperResponse.text();
-          throw new Error(`Serper API error: ${serperResponse.status} ${errorText}`);
-        }
-
-        const data = await serperResponse.json();
-        
-        if (data.shopping && data.shopping.length > 0) {
-          const products: Product[] = data.shopping.slice(0, numToFetch).map((item: any, index: number) => ({
-            id: `s-${page}-${index}-${Date.now()}`,
-            name: item.title,
-            description: item.snippet || item.title,
-            price: parseFloat(String(item.price).replace(/[^0-9.]/g, '')) || 0,
-            originalPrice: item.oldPrice ? parseFloat(String(item.oldPrice).replace(/[^0-9.]/g, '')) : undefined,
-            currency: '₹',
-            imageUrl: item.image || item.thumbnail || "",
-            thumbnailUrl: item.thumbnail || item.image || "",
-            sourceUrl: item.link,
-            sourceName: item.source,
-            brand: item.brand || item.source,
-            rating: item.rating,
-            reviewCount: item.reviews,
-            category: 'Search Result'
-          }));
-
-          searchCache.set(cacheKey, { products, timestamp: Date.now() });
-          return { text: `Found ${products.length} real-time results`, products, isRealTime: true };
-        }
-        break; // Exit loop if successful but no products
-      } catch (e) {
-        attempts++;
-        console.error(`Serper attempt ${attempts} failed:`, e);
-        if (attempts === maxAttempts) break;
-        await new Promise(resolve => setTimeout(resolve, 500)); // Wait before retry
-      }
-    }
-  }
- else {
-    console.warn("Serper API key not found or invalid. Falling back to AI.");
-  }
-
-  // --- FAST AI FALLBACK (No Tools, No Search) ---
   try {
-    const genAI = getAI();
-    const result = await genAI.models.generateContent({
-      model: "gemini-1.5-flash-latest",
-      contents: [{ role: "user", parts: [{ text: `The user is looking for: ${query}. Provide a list of 10 products with estimated prices in INR. Format as JSON matching this schema: ${JSON.stringify(PRODUCT_SCHEMA)}` }] }],
-      config: {
-        responseMimeType: "application/json",
-      }
+    const numToFetch = page === 1 ? 5 : 10;
+    // Optimized for India region and maximum speed
+    const response = await fetch("https://google.serper.dev/shopping", {
+      method: "POST",
+      headers: { 
+        "X-API-KEY": serperKey, 
+        "Content-Type": "application/json" 
+      },
+      body: JSON.stringify({ 
+        q: query, 
+        gl: "in", 
+        num: numToFetch, 
+        page 
+      }),
+      keepalive: true
     });
 
-    const data = JSON.parse(result.text || "[]");
-    return {
-      text: `I found some products based on my knowledge for "${query}". (Real-time search was unavailable)`,
-      products: data,
-      isRealTime: false
+    if (!response.ok) throw new Error(`API Error`);
+
+    const data = await response.json();
+    const items = (data.shopping || []).slice(0, numToFetch);
+    
+    const products: Product[] = items.map((item: any, index: number) => {
+      const mainImage = item.image || item.thumbnail || "";
+      const thumbImage = item.thumbnail || item.image || "";
+      
+      return {
+        id: `s-${page}-${index}-${Date.now()}`,
+        name: item.title,
+        description: item.snippet || item.title,
+        price: parseFloat(String(item.price).replace(/[^0-9.]/g, '')) || 0,
+        originalPrice: item.oldPrice ? parseFloat(String(item.oldPrice).replace(/[^0-9.]/g, '')) : undefined,
+        currency: '₹',
+        imageUrl: mainImage,
+        thumbnailUrl: thumbImage,
+        sourceUrl: item.link,
+        sourceName: item.source,
+        brand: item.brand || item.source,
+        rating: item.rating,
+        reviewCount: item.reviews,
+        category: 'Search Result'
+      };
+    });
+
+    if (products.length > 0) searchCache.set(cacheKey, { products, timestamp: Date.now() });
+
+    return { 
+      text: products.length > 0 ? `Found ${products.length} results` : "No results found.", 
+      products, 
+      isRealTime: true 
     };
   } catch (e) {
-    console.error("Final Fallback Error:", e);
-    return {
-      text: "I'm sorry, I'm having trouble finding products right now. Please try again in a moment.",
-      products: [],
-      isRealTime: false
-    };
+    return { text: "Search failed.", products: [], isRealTime: true, error: "FAILED" };
   }
 }
 
