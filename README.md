@@ -11,11 +11,11 @@ The Global Shopping Agent is designed to simplify the online shopping experience
 - Features **voice search** for a hands-free experience.
 
 ## 🛠️ Tech Stack
-- **Frontend**: React 19 (TypeScript)
-- **Styling**: Tailwind CSS 4.0
-- **AI Engine**: [Google Gemini API](`gemini-flash-latest`)
-- **Real-time Data**: Google Search Grounding (via Gemini SDK)
-- **Build Tool**: Vite
+- **Frontend**: React 19 + Vite (Type-safe UI)
+- **Backend**: Express.js (Proxy for Chromium/Playwright)
+- **Automation**: Playwright (Headless Browser)
+- **AI Engine**: Google Gemini API
+- **Search API**: Serper.dev (Google Shopping scraper)
 
 ## 🚀 Local Setup Instructions
 
@@ -27,9 +27,10 @@ git clone https://github.com/YOUR_USERNAME/YOUR_REPO_NAME.git
 cd YOUR_REPO_NAME
 ```
 
-### 2. Install Dependencies
+### 2. Installation
 ```bash
 npm install
+npx playwright install chromium
 ```
 
 ### 3. Configure Environment Variables
@@ -53,4 +54,3 @@ The application will be available at `http://localhost:3000`.
 3. **Load More**: Click "Load More Options" to fetch the next 10 results from other global retailers.
 4. **Compare**: Click "Compare Prices" on any product card to see live prices from other stores.
 5. **Cart**: Add items to your cart and proceed to a simulated checkout.
-
