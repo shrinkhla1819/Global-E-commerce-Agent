@@ -1,4 +1,4 @@
-import { GoogleGenAI, Type, GenerateContentResponse } from "@google/genai";
+import { GoogleGenAI, Type, FunctionDeclaration } from "@google/genai";
 import { Product, PriceComparison } from "../types";
 
 let aiInstance: GoogleGenAI | null = null;
@@ -6,14 +6,13 @@ let aiInstance: GoogleGenAI | null = null;
 function getAI(): GoogleGenAI {
   if (aiInstance) return aiInstance;
   
-  // Robust key detection for Gemini
-  const apiKey = (import.meta as any).env?.VITE_GEMINI_API_KEY || 
-                 (process as any).env?.GEMINI_API_KEY || 
+  // Try all possible env locations for the key
+  const apiKey = (process as any).env?.GEMINI_API_KEY || 
+                 (import.meta as any).env?.VITE_GEMINI_API_KEY ||
                  (process as any).env?.VITE_GEMINI_API_KEY;
   
-  if (!apiKey || apiKey === "MY_GEMINI_API_KEY" || apiKey.includes("TODO") || apiKey.length < 10) {
-    console.error("Invalid GEMINI_API_KEY detected");
-    throw new Error("GEMINI_API_KEY is missing or invalid. Please set it in Settings.");
+  if (!apiKey || apiKey.length < 5) {
+    throw new Error("GEMINI_API_KEY is missing. Check Settings.");
   }
   
   aiInstance = new GoogleGenAI({ apiKey });
@@ -25,9 +24,9 @@ const searchCache = new Map<string, { products: Product[], timestamp: number }>(
 const CACHE_TTL = 1000 * 60 * 5; // 5 minutes
 
 export async function searchProducts(query: string, page: number = 1): Promise<{ text: string; products: Product[]; isRealTime: boolean; error?: string }> {
-  const serperKey = process.env.VITE_SERPER_API_KEY;
-  if (!serperKey || serperKey === "" || serperKey.includes('TODO')) {
-    return { text: "Key missing", products: [], isRealTime: true, error: "MISSING_KEY" };
+  const serperKey = (process as any).env?.VITE_SERPER_API_KEY || (import.meta as any).env?.VITE_SERPER_API_KEY || (import.meta as any).env?.VITE_SERPER_API_KEY;
+  if (!serperKey) {
+    return { text: "Search Key Missing", products: [], isRealTime: true, error: "MISSING_KEY" };
   }
 
   const cacheKey = `${query.toLowerCase()}-${page}`;
@@ -38,7 +37,6 @@ export async function searchProducts(query: string, page: number = 1): Promise<{
 
   try {
     const numToFetch = page === 1 ? 5 : 10;
-    // Optimized for India region and maximum speed
     const response = await fetch("https://google.serper.dev/shopping", {
       method: "POST",
       headers: { 
@@ -60,18 +58,14 @@ export async function searchProducts(query: string, page: number = 1): Promise<{
     const items = (data.shopping || []).slice(0, numToFetch);
     
     const products: Product[] = items.map((item: any, index: number) => {
-      const mainImage = item.image || item.thumbnail || "";
-      const thumbImage = item.thumbnail || item.image || "";
-      
       return {
         id: `s-${page}-${index}-${Date.now()}`,
         name: item.title,
         description: item.snippet || item.title,
         price: parseFloat(String(item.price).replace(/[^0-9.]/g, '')) || 0,
-        originalPrice: item.oldPrice ? parseFloat(String(item.oldPrice).replace(/[^0-9.]/g, '')) : undefined,
         currency: '₹',
-        imageUrl: mainImage,
-        thumbnailUrl: thumbImage,
+        imageUrl: item.image || item.thumbnail || "",
+        thumbnailUrl: item.thumbnail || item.image || "",
         sourceUrl: item.link,
         sourceName: item.source,
         brand: item.brand || item.source,
@@ -84,12 +78,28 @@ export async function searchProducts(query: string, page: number = 1): Promise<{
     if (products.length > 0) searchCache.set(cacheKey, { products, timestamp: Date.now() });
 
     return { 
-      text: products.length > 0 ? `Found ${products.length} results` : "No results found.", 
+      text: products.length > 0 ? `Found ${products.length} results via Google Shopping` : "No results found.", 
       products, 
       isRealTime: true 
     };
   } catch (e) {
-    return { text: "Search failed.", products: [], isRealTime: true, error: "FAILED" };
+    console.error("Search failed", e);
+    return { text: "Search failed. Please try again.", products: [], isRealTime: true, error: "FAILED" };
+  }
+}
+
+export async function interactWithSite(url: string, action: 'view' | 'add_to_cart' | 'checkout', options?: any): Promise<any> {
+  try {
+    const response = await fetch('/api/interact', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, action, options })
+    });
+    if (!response.ok) throw new Error('Interaction failed');
+    return await response.json();
+  } catch (e) {
+    console.error('Interaction error:', e);
+    throw e;
   }
 }
 
@@ -129,22 +139,82 @@ export async function comparePrices(productName: string): Promise<PriceCompariso
   }
 }
 
-export async function chatWithAgent(message: string, history: { role: 'user' | 'model', parts: { text: string }[] }[]) {
+export async function chatWithAgent(message: string, history: any[]) {
+  const tools = [
+    { googleSearch: {} },
+    {
+      functionDeclarations: [
+        {
+          name: "search_products",
+          description: "Search for real-time products to buy.",
+          parameters: {
+            type: Type.OBJECT,
+            properties: {
+              query: { type: Type.STRING, description: "The product search query" }
+            },
+            required: ["query"]
+          }
+        },
+        {
+          name: "add_to_cart",
+          description: "Add a product from the search results to the shopping cart.",
+          parameters: {
+            type: Type.OBJECT,
+            properties: {
+              index: { type: Type.NUMBER, description: "The 1-based index of the product in the most recent search results." }
+            },
+            required: ["index"]
+          }
+        },
+        {
+          name: "proceed_to_checkout",
+          description: "Trigger the checkout process once the user is ready.",
+          parameters: {
+            type: Type.OBJECT,
+            properties: {}
+          }
+        },
+        {
+          name: "interact_with_site",
+          description: "Perform real-time actions on a specific merchant website using a headless browser.",
+          parameters: {
+            type: Type.OBJECT,
+            properties: {
+              index: { type: Type.NUMBER, description: "The 1-based index of the product from search results to interact with." },
+              action: { 
+                type: Type.STRING, 
+                enum: ["view", "add_to_cart", "checkout"],
+                description: "The action to perform in the merchant's site." 
+              }
+            },
+            required: ["index", "action"]
+          }
+        }
+      ] as FunctionDeclaration[]
+    }
+  ];
+
   try {
     const chat = getAI().chats.create({
-      model: "gemini-flash-latest",
+      model: "gemini-3-flash-preview",
       config: {
-        systemInstruction: "You are a global e-commerce shopping agent. You help users find products, manage their cart, and proceed to checkout. Be helpful, professional, and concise. If the user asks to search for something, use the searchProducts tool logic (though here you are in a chat context, so just respond naturally).",
-        tools: [{ googleSearch: {} }],
+        systemInstruction: `You are a professional shopping assistant. 
+        Architecture:
+        1. Search: Use 'search_products' (Google Shopping) to find products.
+        2. Action: When a user want to see a product or add to cart, ALWAYS use 'interact_with_site'.
+        'interact_with_site' opens the actual site (Amazon, etc) using Playwright to handle variants and adding to cart.
+        3. Checkout: Use 'proceed_to_checkout' to collect address details later.
+        Be concise. Use emojis!`,
+        tools,
         toolConfig: { includeServerSideToolInvocations: true }
       },
-      history: history
+      history: history.length > 0 ? history : undefined
     });
 
     const response = await chat.sendMessage({ message });
-    return response.text || "I'm sorry, I couldn't generate a response.";
+    return response;
   } catch (e) {
     console.error("Chat Error:", e);
-    return "I'm sorry, I'm having trouble responding right now.";
+    throw e;
   }
 }

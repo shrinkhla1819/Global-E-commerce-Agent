@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Send, Bot, User, Loader2, Search, ShoppingBag, Heart, Mic, MicOff } from 'lucide-react';
 import { Message, Product } from '../types';
-import { searchProducts } from '../services/gemini';
+import { searchProducts, chatWithAgent, interactWithSite } from '../services/gemini';
 import { ProductCard } from './ProductCard';
 import { motion, AnimatePresence } from 'motion/react';
 import ReactMarkdown from 'react-markdown';
@@ -74,6 +74,15 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [isListening, setIsListening] = useState(false);
   const [currentQuery, setCurrentQuery] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
+  const [lastSearchResults, setLastSearchResults] = useState<Product[]>([]);
+  const [checkoutStep, setCheckoutStep] = useState<'idle' | 'address'>('idle');
+  const [addressInfo, setAddressInfo] = useState({
+    fullName: '',
+    street: '',
+    city: '',
+    state: '',
+    zip: ''
+  });
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<SpeechRecognition | null>(null);
 
@@ -135,27 +144,131 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     setIsLoading(true);
 
     try {
-      const pageToFetch = isLoadMore ? currentPage + 1 : 1;
-      const result = await searchProducts(userMessage, pageToFetch);
+      if (isLoadMore) {
+        const pageToFetch = currentPage + 1;
+        const result = await searchProducts(userMessage, pageToFetch);
+        setMessages(prev => [...prev, { 
+          role: 'model', 
+          text: `Here are more options for "**${userMessage}**" (Page ${pageToFetch})`,
+          products: result.products
+        }]);
+        setLastSearchResults(prev => [...prev, ...result.products]);
+        setCurrentPage(pageToFetch);
+        setIsLoading(false);
+        return;
+      }
+
+      // Handle Address Collection Step-by-Step
+      if (checkoutStep === 'address') {
+        const nextInfo = { ...addressInfo };
+        let nextField = '';
+        let nextPrompt = '';
+
+        if (!nextInfo.fullName) {
+          nextInfo.fullName = userMessage;
+          nextField = 'Street Address';
+          nextPrompt = "Got it, **" + userMessage + "**. Now, what is your **Street Address**?";
+        } else if (!nextInfo.street) {
+          nextInfo.street = userMessage;
+          nextField = 'City';
+          nextPrompt = "Understood. Which **City** is that in?";
+        } else if (!nextInfo.city) {
+          nextInfo.city = userMessage;
+          nextField = 'State/Province';
+          nextPrompt = "Almost there! What **State or Province**?";
+        } else if (!nextInfo.state) {
+          nextInfo.state = userMessage;
+          nextField = 'Zip Code';
+          nextPrompt = "Final detail: What is the **Zip/Postal Code**?";
+        } else if (!nextInfo.zip) {
+          nextInfo.zip = userMessage;
+          setCheckoutStep('idle');
+          // Logic to finish and show assistant
+          setMessages(prev => [...prev, { 
+            role: 'model', 
+            text: "Perfect! I've collected your address. I'm now opening the **Checkout Assistant** to help you finish the purchase on the real sites. 🚀"
+          }]);
+          // We'll trigger a callback or state here
+          setTimeout(() => (window as any).dispatchCheckoutReady?.(nextInfo), 500);
+          setIsLoading(false);
+          return;
+        }
+
+        setAddressInfo(nextInfo);
+        setMessages(prev => [...prev, { role: 'model', text: nextPrompt }]);
+        setIsLoading(false);
+        return;
+      }
+
+      const history = messages.map(m => ({
+        role: m.role,
+        parts: [{ text: m.text }]
+      }));
+
+      const aiResponse = await chatWithAgent(userMessage, history);
       
+      const functionCalls = aiResponse.functionCalls;
+      let finalResponseText = '';
+      let foundProducts: Product[] = [];
+      try {
+        finalResponseText = aiResponse.text || '';
+      } catch (e) {
+        // Text might be empty if there are only function calls
+        finalResponseText = '';
+      }
+
+      if (functionCalls) {
+        for (const call of functionCalls) {
+          if (call.name === 'search_products') {
+            const query = (call.args as any).query;
+            const result = await searchProducts(query, 1);
+            foundProducts = result.products;
+            setLastSearchResults(foundProducts);
+            finalResponseText = result.text;
+          } else if (call.name === 'add_to_cart') {
+            const index = (call.args as any).index - 1;
+            if (lastSearchResults[index]) {
+              onAddToCart(lastSearchResults[index]);
+              finalResponseText += `\n\n✅ Added **${lastSearchResults[index].name}** to your cart!`;
+            } else {
+              finalResponseText += `\n\n⚠️ I couldn't find product #${index + 1} in the results.`;
+            }
+          } else if (call.name === 'proceed_to_checkout') {
+            setCheckoutStep('address');
+            finalResponseText = "Great! Let's get your details for the shopping site. What is your **Full Name**?";
+          } else if (call.name === 'interact_with_site') {
+            const index = (call.args as any).index - 1;
+            const action = (call.args as any).action;
+            const product = lastSearchResults[index];
+            if (product) {
+              setMessages(prev => [...prev, { role: 'model', text: `🚀 Opening ${product.sourceName}... performing **${action}**.` }]);
+              try {
+                const res = await interactWithSite(product.sourceUrl, action);
+                finalResponseText = `Results from merchant site:\n\n${res.message}`;
+                if (action === 'add_to_cart' && res.status === 'success') {
+                  onAddToCart(product);
+                }
+              } catch (e) {
+                finalResponseText = `⚠️ Failed to interact with ${product.sourceName}. I'll add it to your local cart instead.`;
+                onAddToCart(product);
+              }
+            } else {
+              finalResponseText = "⚠️ Product not found in latest results.";
+            }
+          }
+        }
+      }
+
       setMessages(prev => [...prev, { 
         role: 'model', 
-        text: result.text,
-        products: result.products,
-        isRealTime: result.isRealTime,
-        error: result.error
+        text: finalResponseText,
+        products: foundProducts.length > 0 ? foundProducts : undefined
       }]);
-      
-      if (isLoadMore) {
-        setCurrentPage(pageToFetch);
-      }
+
     } catch (error) {
       console.error(error);
-      const errorMessage = error instanceof Error ? error.message : "I'm sorry, I encountered an error while searching. Please try again.";
-      setMessages(prev => [...prev, { 
-        role: 'model', 
-        text: errorMessage 
-      }]);
+      const errorMessage = "I'm sorry, I'm having trouble right now. Please try again.";
+      setMessages(prev => [...prev, { role: 'model', text: errorMessage }]);
     } finally {
       setIsLoading(false);
     }
@@ -317,3 +430,5 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     </div>
   );
 };
+
+export default ChatInterface;

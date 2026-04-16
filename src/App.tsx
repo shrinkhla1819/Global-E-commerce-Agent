@@ -3,6 +3,7 @@ import { ChatInterface } from './components/ChatInterface';
 import { Cart } from './components/Cart';
 import { Checkout } from './components/Checkout';
 import { PriceComparisonModal } from './components/PriceComparisonModal';
+import { CheckoutAssistant } from './components/CheckoutAssistant';
 import { CartItem, Product, CheckoutDetails, PriceComparison, Order } from './types';
 import { motion, AnimatePresence } from 'motion/react';
 import { ShoppingBag, Search, Globe, History, CreditCard, Package } from 'lucide-react';
@@ -35,7 +36,22 @@ export default function App() {
     });
   };
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
+  const [isCheckoutAssistantOpen, setIsCheckoutAssistantOpen] = useState(false);
+  const [collectedAddress, setCollectedAddress] = useState({
+    fullName: '',
+    street: '',
+    city: '',
+    state: '',
+    zip: ''
+  });
   const [showWelcome, setShowWelcome] = useState(true);
+
+  useEffect(() => {
+    (window as any).dispatchCheckoutReady = (info: any) => {
+      setCollectedAddress(info);
+      setIsCheckoutAssistantOpen(true);
+    };
+  }, []);
 
   // Price Comparison State
   const [isComparisonOpen, setIsComparisonOpen] = useState(false);
@@ -221,6 +237,13 @@ export default function App() {
         product={selectedProduct}
         comparisons={comparisons}
         isLoading={isComparing}
+      />
+
+      <CheckoutAssistant
+        isOpen={isCheckoutAssistantOpen}
+        onClose={() => setIsCheckoutAssistantOpen(false)}
+        items={cartItems}
+        address={collectedAddress}
       />
 
       {/* Welcome Overlay */}
